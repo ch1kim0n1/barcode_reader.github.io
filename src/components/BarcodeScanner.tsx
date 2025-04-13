@@ -1,143 +1,99 @@
 import React, { useEffect, useRef, useState } from "react";
-import jsQR from "jsqr";
+import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
 const BarcodeScanner: React.FC = () => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [scanning, setScanning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [lastScanTime, setLastScanTime] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
-  const streamRef = useRef<MediaStream | null>(null);
-  const animationFrameId = useRef<number | undefined>(undefined);
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
 
   useEffect(() => {
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-        });
+    const screenWidth = window.innerWidth;
+    const scannerSize = Math.min(screenWidth * 0.8, 250);
 
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          // Wait for video to be loaded before starting scan
-          videoRef.current.addEventListener("loadeddata", () => {
+    scannerRef.current = new Html5QrcodeScanner(
+      "reader",
+      {
+        qrbox: {
+          width: scannerSize,
+          height: scannerSize,
+        },
+        fps: 10,
+        aspectRatio: 1,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+        ],
+      },
+      false
+    );
+
+    // Start scanning
+    const startScanner = async () => {
+      try {
+        await scannerRef.current?.render(
+          (decodedText) => {
+            // Success callback
+            setResult(decodedText);
+            setIsDetecting(true);
             setScanning(true);
-            scanQRCode();
-          });
-          videoRef.current.play();
-        }
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to access camera"
+            const now = new Date();
+            setLastScanTime(now.toLocaleTimeString());
+            setTimeout(() => setIsDetecting(false), 1500);
+          },
+          (errorMessage) => {
+            // Error callback
+            if (errorMessage?.includes("NotFoundError")) {
+              setError("Camera access denied or no camera found");
+            }
+          }
         );
+        // Scanner is ready and running
+        setScanning(true);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : "Failed to start scanner";
+        setError(errorMessage);
         setScanning(false);
       }
     };
 
-    const scanQRCode = () => {
-      if (!videoRef.current || !canvasRef.current) return;
+    startScanner();
 
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas.getContext("2d");
-
-      if (!context) return;
-
-      // Check if video has valid dimensions
-      if (video.videoWidth === 0 || video.videoHeight === 0) {
-        // If video dimensions aren't ready yet, try again in the next frame
-        animationFrameId.current = requestAnimationFrame(scanQRCode);
-        return;
-      }
-
-      // Match canvas size to video feed
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-
-      // Draw current video frame to canvas
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: "dontInvert",
-      });
-
-      if (code) {
-        // QR code detected
-        setResult(code.data);
-        setIsDetecting(true);
-        // Increase the detection indicator duration to 1.5 seconds for better visibility
-        setTimeout(() => setIsDetecting(false), 1500);
-      } else {
-        setIsDetecting(false);
-      }
-
-      // Continue scanning
-      animationFrameId.current = requestAnimationFrame(scanQRCode);
-    };
-
-    startCamera();
-
+    // Cleanup function
     return () => {
-      if (animationFrameId.current) {
-        cancelAnimationFrame(animationFrameId.current);
+      if (scannerRef.current) {
+        scannerRef.current.clear().catch(console.error);
       }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-      setScanning(false);
     };
   }, []);
 
   return (
-    <div className="relative max-w-2xl mx-auto p-4">
-      <div
-        className={`relative rounded-lg overflow-hidden ${
+    <div className="w-full min-h-screen bg-gray-50 flex flex-col items-center py-4 px-2 sm:px-4">
+      <div className="w-full max-w-md mx-auto">
+        <div className={`relative rounded-xl overflow-hidden shadow-lg bg-white ${
           isDetecting ? "ring-4 ring-green-500 animate-pulse" : ""
-        }`}
-      >
-        {/* Video feed */}
-        <video
-          ref={videoRef}
-          className="w-full h-auto"
-          style={{ minHeight: "300px", background: "#000000" }}
-          playsInline
-        />
-
-        {/* Hidden canvas for processing */}
-        <canvas ref={canvasRef} className="hidden" />
-
-        {/* Scanning overlay */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div
-            className={`absolute inset-20 border-2 rounded-lg transition-colors duration-300 ${
-              isDetecting ? "border-green-500 border-4" : "border-white"
-            }`}
-          >
-            {/* Scanning corners */}
-            <div className="absolute inset-0">
-              <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-blue-500" />
-              <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-blue-500" />
-              <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-blue-500" />
-              <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-blue-500" />
-            </div>
-            {/* Scanning animation line */}
-            <div
-              className={`absolute inset-x-0 h-0.5 bg-blue-500 animate-[scan_2s_linear_infinite] ${
-                isDetecting ? "bg-green-500" : ""
-              }`}
-            />
-          </div>
+        }`}>
+          {/* Scanner container */}
+          <div 
+            id="reader" 
+            className="w-full" 
+            style={{ 
+              minHeight: "300px",
+              maxHeight: "80vh"
+            }} 
+          />
 
           {/* Success overlay */}
           {isDetecting && (
             <div className="absolute inset-0 bg-green-500 bg-opacity-20 flex items-center justify-center">
-              <div className="bg-white px-6 py-3 rounded-lg shadow-lg transform scale-110 transition-transform">
+              <div className="bg-white px-4 py-2 rounded-lg shadow-lg transform scale-110 transition-transform">
                 <div className="flex items-center space-x-2">
                   <svg
-                    className="w-6 h-6 text-green-500"
+                    className="w-5 h-5 text-green-500"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -149,7 +105,7 @@ const BarcodeScanner: React.FC = () => {
                       d="M5 13l4 4L19 7"
                     />
                   </svg>
-                  <span className="text-green-700 font-semibold">
+                  <span className="text-green-700 font-semibold text-sm">
                     Code Detected!
                   </span>
                 </div>
@@ -157,50 +113,53 @@ const BarcodeScanner: React.FC = () => {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Status Panel */}
-      <div className="mt-4 p-4 bg-gray-100 rounded-lg">
-        <div className="flex items-center gap-2 mb-2">
-          <div
-            className={`w-3 h-3 rounded-full ${
-              scanning ? "bg-green-500" : "bg-red-500"
-            }`}
-          />
-          <span className="text-sm font-medium text-black">
-            {scanning ? "Camera active" : "Camera inactive"}
-          </span>
-          {scanning && (
-            <span
-              className={`ml-2 px-2 py-0.5 rounded ${
-                isDetecting
-                  ? "bg-green-100 text-green-700"
-                  : "bg-blue-100 text-blue-700"
+        {/* Status Panel */}
+        <div className="mt-4 p-4 bg-white rounded-xl shadow-md">
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className={`w-2.5 h-2.5 rounded-full ${
+                scanning ? "bg-green-500" : "bg-red-500"
               }`}
-            >
-              {isDetecting ? "Code Found!" : "Scanning..."}
+            />
+            <span className="text-sm font-medium text-gray-700">
+              {scanning ? "Camera active" : "Camera inactive"}
             </span>
+            {scanning && (
+              <span
+                className={`ml-auto px-2 py-0.5 rounded-full text-xs font-medium ${
+                  isDetecting
+                    ? "bg-green-100 text-green-700"
+                    : "bg-blue-100 text-blue-700"
+                }`}
+              >
+                {isDetecting ? "Code Found!" : "Ready to scan"}
+              </span>
+            )}
+          </div>
+
+          {error && (
+            <div className="mt-2 p-2 bg-red-50 rounded-lg">
+              <p className="text-red-600 text-sm">{error}</p>
+            </div>
+          )}
+
+          {result && (
+            <div className="mt-3 space-y-2">
+              <h3 className="text-sm font-semibold text-gray-700">Last detected code:</h3>
+              <div className="relative">
+                <p className="text-blue-600 font-mono text-sm bg-gray-50 p-3 rounded-lg break-all">
+                  {result}
+                </p>
+                {lastScanTime && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Scanned at: {lastScanTime}
+                  </p>
+                )}
+              </div>
+            </div>
           )}
         </div>
-
-        {error && (
-          <div className="text-red-500 text-sm mt-2">Error: {error}</div>
-        )}
-
-        {isDetecting && (
-          <div className="mt-2 text-green-600 font-medium animate-pulse">
-            Code detected!
-          </div>
-        )}
-
-        {result && (
-          <div className="mt-2">
-            <h3 className="font-semibold">Last detected code:</h3>
-            <p className="text-blue-600 font-mono bg-gray-200 p-2 rounded mt-1 break-all">
-              {result}
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );
